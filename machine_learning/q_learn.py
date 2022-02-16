@@ -5,13 +5,10 @@ import strawberryfields as sf
 from strawberryfields.ops import *
 from strawberryfields.utils import operation
 import tensorflow as tf
-from gkp_target import psi
-from qutip import wigner, Qobj, wigner_cmap
+from qutip import wigner, Qobj, wigner_cmap, fidelity
 import matplotlib as mpl
 from matplotlib import cm
-from thewalrus.quantum import state_vector
-
-#%%
+print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
 
 def interferometer(params, q):
     """Parameterised interferometer acting on ``N`` modes.
@@ -73,8 +70,8 @@ def layer(params, q):
         Sgate(s[i]) | q[i]
 
     interferometer(int1, q)
-
     Sgate(s2) | q[N-1] #GKP state mode
+    MeasureHomodyne(0)  | q[0]
 
 
 def init_weights(modes, layers, active_sd=0.0001, passive_sd=0.1):
@@ -113,20 +110,28 @@ def init_weights(modes, layers, active_sd=0.0001, passive_sd=0.1):
 
     return weights
 
-#%%
-
 # set the random seed
 tf.random.set_seed(77)
 np.random.seed(77)
 
 # define width and depth of CV quantum neural network
-modes = 3
+modes = 2
 layers = 1
-cutoff_dim = 25
+cutoff_dim = 7
 
 # defining desired state
-target_state = psi
-target_state = tf.constant(target_state, dtype=tf.complex64)
+prog_gkp = sf.Program(1)
+e = 0.1 #corresponding to delta = 10 dB
+with prog_gkp.context as q:
+    GKP(epsilon = e) | q[0]
+    
+eng_gkp = sf.Engine('fock', backend_options = {'cutoff_dim': cutoff_dim}) #
+gkp = eng_gkp.run(prog_gkp).state
+
+target_state = gkp
+target_dm = gkp.dm()
+target_dm_q = Qobj(target_dm)
+target_dm = tf.constant(target_dm, dtype=tf.complex64)
 
 # initialize engine and program
 eng = sf.Engine(backend="tf", backend_options={"cutoff_dim": cutoff_dim})
@@ -136,11 +141,9 @@ qnn = sf.Program(modes)
 weights = init_weights(modes, layers) # our TensorFlow weights
 num_params = np.prod(weights.shape)   # total number of parameters in our model
 
-#%%
-
 # Create array of Strawberry Fields symbolic gate arguments, matching
 # the size of the weights Variable.
-sf_params = np.arange(num_params).reshape(weights.shape).astype(np.str)
+sf_params = np.arange(num_params).reshape(weights.shape).astype(str)
 sf_params = np.array([qnn.params(*i) for i in sf_params])
 
 # Construct the symbolic Strawberry Fields program by
@@ -149,24 +152,29 @@ with qnn.context as q:
     for k in range(layers):
         layer(sf_params[k], q)
 
+# mapping = {p.name: w for p, w in zip(sf_params.flatten(), tf.reshape(weights, [-1]))}
+# state = eng.run(qnn, args=mapping).state
+# dm = state.reduced_dm(1)
+# dm_q = Qobj(dm.numpy())
+
+# fid = fidelity(dm_q, target_dm_q)
+# diff = tf.abs(dm - target_dm)
+# trace_dist = 0.5*tf.linalg.trace(diff)
+
+#%%
+
 def cost(weights):
     # Create a dictionary mapping from the names of the Strawberry Fields
     # symbolic gate parameters to the TensorFlow weight values.
     mapping = {p.name: w for p, w in zip(sf_params.flatten(), tf.reshape(weights, [-1]))}
-
-    # run the engine
     state = eng.run(qnn, args=mapping).state
-    #c = state.is_pure
-    #ket = state.ket()
-    mu, cov = state.means(), state.cov()
+    dm = state.reduced_dm(1)
+    dm_q = Qobj(dm.numpy())
 
-    ket = state_vector(mu, cov, post_select={0: 5, 1: 7}, normalize=False, cutoff=cutoff_dim)
-    p_psi = np.linalg.norm(ket)
-    ket = ket / p_psi
+    fid = fidelity(dm_q, target_dm_q)
+    trace_dist = 0.5*tf.linalg.trace(tf.abs(dm - target_dm))
 
-    difference = tf.reduce_sum(tf.abs(ket - target_state))
-    fidelity = tf.abs(tf.reduce_sum(tf.math.conj(ket) * target_state)) ** 2
-    return difference, fidelity, ket, tf.math.real(state.trace())
+    return trace_dist, fid, dm, tf.math.real(state.trace())
 
 # set up the optimizer
 opt = tf.keras.optimizers.Adam()
@@ -175,19 +183,21 @@ cost_before, fidelity_before, _, _ = cost(weights)
 fid_progress = []
 
 # Perform the optimization
-for i in range(800):
+for i in range(300):
 
     # reset the engine if it has already been executed
     if eng.run_progs:
         eng.reset()
 
     with tf.GradientTape() as tape:
-        loss, fid, ket, trace = cost(weights)
+        loss, fid, red_dm, trace = cost(weights)
 
-    fid_progress.append(fid.numpy())
+    fid_progress.append(fid)
 
+    # print(type(weights))
     # one repetition of the optimization
     gradients = tape.gradient(loss, weights)
+    print(gradients)
     opt.apply_gradients(zip([gradients], [weights]))
 
     # Prints progress at every rep
@@ -195,10 +205,11 @@ for i in range(800):
         print("Rep: {} Cost: {:.4f} Fidelity: {:.4f} Trace: {:.4f}".format(i, loss, fid, trace))
 
 
-print("\nFidelity before optimization: ", fidelity_before.numpy())
-print("Fidelity after optimization: ", fid.numpy())
-print("\nTarget state: ", target_state.numpy())
-print("Output state: ", np.round(ket.numpy(), decimals=3))
+print("\nFidelity before optimization: ", fidelity_before)
+print("Fidelity after optimization: ", fid)
+print("\nTarget density matrix: ", target_dm)
+print("Output reduced density matrix: ", np.round(red_dm, decimals=3))
+print("\nCircuit parameters: ", weights)
 
 plt.rcParams["font.family"] = "serif"
 plt.rcParams["font.sans-serif"] = ["Computer Modern Roman"]
@@ -211,14 +222,25 @@ plt.xlabel("Step")
 
 grid = 800
 xvec = np.linspace(-5,5, grid)
-Wp = wigner(Qobj(ket.numpy()), xvec, xvec)
+Wp = wigner(Qobj(red_dm.numpy()), xvec, xvec)
 wmap = wigner_cmap(Wp)
 sc1 = np.max(Wp)
 nrm = mpl.colors.Normalize(-sc1, sc1)
 fig, axes = plt.subplots(1, 1, figsize=(5, 4))
 plt1 = axes.contourf(xvec, xvec, Wp, 60,  cmap=cm.RdBu, norm=nrm)
 axes.contour(xvec, xvec, Wp, 60,  cmap=cm.RdBu, norm=nrm)
-axes.set_title("Wigner function of the heralded state");
+axes.set_title("Wigner function of the learnt state")
 cb1 = fig.colorbar(plt1, ax=axes)
 fig.tight_layout()
+
+Wp2 = wigner(Qobj(target_dm.numpy()), xvec, xvec)
+wmap2 = wigner_cmap(Wp2)
+sc12 = np.max(Wp2)
+nrm2 = mpl.colors.Normalize(-sc12, sc12)
+fig2, axes2 = plt.subplots(1, 1, figsize=(5, 4))
+plt2 = axes2.contourf(xvec, xvec, Wp2, 60,  cmap=cm.RdBu, norm=nrm2)
+axes2.contour(xvec, xvec, Wp2, 60,  cmap=cm.RdBu, norm=nrm2)
+axes2.set_title("Wigner function of the target state")
+cb12 = fig2.colorbar(plt2, ax=axes2)
+fig2.tight_layout()
 plt.show()
