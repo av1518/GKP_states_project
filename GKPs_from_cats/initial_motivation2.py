@@ -3,15 +3,22 @@ import numpy as np
 import matplotlib.pyplot as plt
 import strawberryfields as sf
 from strawberryfields import ops
-from gkp_target import target_dm
+from gkp_target import target_dm, cutoff
+from qutip import wigner, Qobj, wigner_cmap
+import matplotlib as mpl
+from matplotlib import cm
 
-cutoff = 30
 xvec = np.linspace(-12,12, 800)
 
 #%%
+
 prog = sf.Program(2)
-s = 0.611#0.4
-a = 3.278#2*np.sqrt(np.pi)*np.exp(s)
+s = 0.611
+a = 3.278 #np.sqrt(np.pi)*np.exp(s)
+n = 2
+
+s = 0.4
+a = 2*np.sqrt(2)*np.sqrt(np.pi)*np.exp(s)
 
 with prog.context as q:
     ops.Catstate(a) | q[0]
@@ -21,12 +28,12 @@ with prog.context as q:
     ops.BSgate() | (q[0], q[1])
     ops.MeasureHomodyne(np.pi/2, select=0.0) | q[0]
     
-eng = sf.Engine(backend="tf", backend_options={"cutoff_dim":cutoff})
+eng = sf.Engine(backend="fock", backend_options={"cutoff_dim":cutoff})
 state = eng.run(prog).state
 dm = state.reduced_dm(1)
 
 trace = 0.5*np.trace(np.absolute(dm - target_dm))
-print(trace)
+print('Initial trace distance =', trace)
 
 plt.figure()
 plt.plot(xvec, state.x_quad_values(1,xvec,xvec), label = f'a = {a}')
@@ -34,40 +41,40 @@ plt.xlabel('x')
 plt.ylabel('Probability')
 plt.legend()
 
-prog2 = sf.Program(2)
+if n != 0:
+    for i in range(n):
+        prog2 = sf.Program(2)
 
-with prog2.context as q:
-    ops.DensityMatrix(dm) | q[0]
-    ops.DensityMatrix(dm) | q[1]
-    ops.BSgate() | (q[0],q[1])
-    ops.MeasureHomodyne(np.pi/2,select=0.0) | q[1]
+        with prog2.context as q:
+            ops.DensityMatrix(dm) | q[0]
+            ops.DensityMatrix(dm) | q[1]
+            ops.BSgate() | (q[0],q[1])
+            ops.MeasureHomodyne(np.pi/2,select=0.0) | q[1]
 
-eng2 = sf.Engine(backend="tf", backend_options={"cutoff_dim":cutoff})
-state2 = eng2.run(prog2).state
-dm2 = state2.reduced_dm(0)
+        eng2 = sf.Engine(backend="fock", backend_options={"cutoff_dim":cutoff})
+        state2 = eng2.run(prog2).state
+        dm = state2.reduced_dm(0)
 
-plt.figure()
-plt.plot(xvec, state2.x_quad_values(0,xvec,xvec), label = f'a = {a}')
-plt.xlabel('x')
-plt.ylabel('Probability')
-plt.legend()
+        plt.figure()
+        plt.plot(xvec, state2.x_quad_values(0,xvec,xvec), label = f'a = {a}')
+        plt.xlabel('x')
+        plt.ylabel('Probability')
+        plt.legend()
+        
+        eng2.reset()
 
-prog3 = sf.Program(2)
+trace = 0.5*np.trace(np.abs(dm - target_dm))
+print('Final trace distance =', trace)
 
-with prog3.context as q:
-    ops.DensityMatrix(dm2) | q[0]
-    ops.DensityMatrix(dm2) | q[1]
-    ops.BSgate() | (q[0],q[1])
-    ops.MeasureHomodyne(np.pi/2,select=0.0) | q[1]
-
-eng3 = sf.Engine(backend="tf", backend_options={"cutoff_dim":cutoff})
-state3 = eng3.run(prog3).state
-dm3 = state3.reduced_dm(0)
-
-plt.figure()
-plt.plot(xvec, state3.x_quad_values(0,xvec,xvec), label = f'a = {a}')
-plt.xlabel('x')
-plt.ylabel('Probability')
-plt.legend()
+xvec = np.linspace(-6,6, 800)
+Wp2 = wigner(Qobj(dm), xvec, xvec)
+wmap2 = wigner_cmap(Wp2)
+sc12 = np.max(Wp2)
+nrm2 = mpl.colors.Normalize(-sc12, sc12)
+fig2, axes2 = plt.subplots(1, 1, figsize=(5, 4))
+plt2 = axes2.contourf(xvec, xvec, Wp2, 60,  cmap=cm.RdBu, norm=nrm2)
+axes2.contour(xvec, xvec, Wp2, 60,  cmap=cm.RdBu, norm=nrm2)
+cb12 = fig2.colorbar(plt2, ax=axes2)
+fig2.tight_layout()
 
 plt.show()
