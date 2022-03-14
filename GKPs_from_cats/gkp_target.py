@@ -10,13 +10,15 @@ from strawberryfields.ops import *
 from qutip import wigner, Qobj, wigner_cmap
 import matplotlib as mpl
 from matplotlib import cm
+from cutoff_opt import min_cutoff
 
 m=1.
 w=1.
 hbar=1.
 
-dB = 8 # the aim is 24.4
-cutoff = 30
+dB = 12 # the aim is 24.4
+cutoff = min_cutoff(dB)
+print(f'Cutoff: {cutoff}')
 
 eps = np.finfo(float).eps
 
@@ -91,17 +93,14 @@ cns = fock_coeffs(x,gk,cutoff)
 fock_range = np.arange(0,cutoff,1)
 ad_cns = adj(cns)
 dm_target = ad_cns*cns
+fock_probs = cns**2
+print('Sum of Fock probabilities: ', sum(fock_probs))
 
 plt.figure()
 plt.plot(x,gk**2, label = f'{dB}dB')
 plt.xlabel('x')
 plt.ylabel('Probability')
 plt.legend()
-
-# plt.figure()
-# plt.bar(fock_range,cns)
-# plt.xlabel('Number basis')
-# plt.ylabel('Fock amplitudes')
 
 plt.figure()
 plt.bar(fock_range,(cns)**2)
@@ -132,6 +131,8 @@ gkp = eng_gkp.run(prog_gkp).state
 
 target_state = gkp
 target_dm = gkp.dm()
+
+#%%
 
 xvec = np.linspace(-6,6, 800)
 Wp2 = wigner(Qobj(target_dm), xvec, xvec)
