@@ -1,4 +1,3 @@
-#%%
 import numpy as np
 import scipy.integrate as integrate
 import numpy.polynomial.hermite as Herm
