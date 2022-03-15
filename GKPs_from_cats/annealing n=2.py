@@ -9,36 +9,6 @@ from tqdm import tqdm
 # from matplotlib import cm
 print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
 from gkp_target import target_dm, cutoff
-#%%
-# cutoff = 30
-# xvec = np.linspace(-11,11, 800)
-
-
-# zeta = 1.0
-
-# prog = sf.Program(2)
-# a = np.sqrt(np.pi)*np.exp(zeta)
-
-# with prog.context as q:
-#     ops.Catstate(a) | q[0]
-#     ops.Catstate(a) | q[1]
-#     ops.Sgate(zeta) | q[0]
-#     ops.Sgate(zeta) | q[1]
-#     ops.BSgate() | (q[0], q[1])
-#     ops.MeasureHomodyne(np.pi/2, select=0.0) | q[0]
-    
-# eng = sf.Engine(backend="fock", backend_options={"cutoff_dim":cutoff})
-# state = eng.run(prog).state
-# print(state)
-
-# plt.figure()
-# plt.plot(xvec, state.x_quad_values(1,xvec,xvec), label = f'a = {a}')
-# plt.xlabel('x')
-# plt.ylabel('Probability')
-# plt.legend()
-
-# plt.show()
-
 #%% 
 print('cutoff of gkp target is =', cutoff)
 #%%
@@ -54,11 +24,25 @@ def newcost(a, s, cut = cutoff):
         ops.Sgate(s) | q[1]
         ops.BSgate() | (q[0], q[1])
         ops.MeasureHomodyne(np.pi/2, select=0.0) | q[0]
+    
     eng = sf.Engine(backend="fock", backend_options={"cutoff_dim":cut})
     state = eng.run(prog).state
-    
     dm = state.reduced_dm(1)
-    # dm_q = Qobj(dm)
+
+    # if n != 0:
+    for i in range(2):
+        prog2 = sf.Program(2)
+
+        with prog2.context as q:
+            ops.DensityMatrix(dm) | q[0]
+            ops.DensityMatrix(dm) | q[1]
+            ops.BSgate() | (q[0],q[1])
+            ops.MeasureHomodyne(np.pi/2,select=0.0) | q[1]
+
+        eng2 = sf.Engine(backend="fock", backend_options={"cutoff_dim":cut})
+        state2 = eng2.run(prog2).state
+        dm = state2.reduced_dm(0)
+        eng2.reset()
     
     
     # target_dm_q = Qobj(target_dm)
@@ -136,8 +120,8 @@ t,cost_progress = runchain(newcost, 3, 0.2, 0.2, 0.2)
 #%%
 
 
-np.save('anneal_0.3_0.0_-0.005_100', t)
-np.save('cost_prog_0.3_0.0,-0.05,100', cost_progress)
+np.save('annealN=2_0.3_0.0_-0.005_100', t)
+np.save('cost_progN=2_0.3_0.0,-0.05,100', cost_progress)
 #%%
 t = np.load('anneal_0.3_0.0_-0.005_100',allow_pickle=True)
 cost_progress = np.load('cost_prog_0.3_0.0,-0.05,100', allow_pickle=True)
