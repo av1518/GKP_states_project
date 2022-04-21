@@ -24,10 +24,10 @@ plot_params = {'axes.labelsize':40,
 mpl.rcParams.update(plot_params)
 
 n = 3
-s = 0.3427212441660357
-a = 6.696114053323244
-dB_target = 13.5
-prob_threshold = 0.9
+s = 0.85
+a = np.sqrt(2)**(n-1)*np.sqrt(np.pi)*np.exp(s)
+dB_target = 10
+prob_threshold = 0.997
 
 st = q_state(a, dB_target)
 opt = optimal_cutoff(prob_threshold)
